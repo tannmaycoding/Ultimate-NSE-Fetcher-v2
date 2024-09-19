@@ -1,17 +1,20 @@
 from nselib import capital_market
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
 st.title("Stock Market Historical Prices")
 options = ["NSE Share", "Nifty 500", "Nifty 100", "Nifty 200", "Nifty 50", "Nifty Next 50", "Nifty Midcap 150", "Nifty Midcap 50",
            "Nifty Midcap Select", "Nifty Midcap 100", "Nifty Smallcap 250", "India Vix"]
-name = st.selectbox("Broad Market Index Name", options=options)
+name = st.selectbox("NSE Type Name", options=options)
 
-start, end = st.columns(2, vertical_alignment="top")
-
-# Initialize services_count in session state if it doesn't exist
 if 'services_count' not in st.session_state:
     st.session_state.services_count = 0
+
+if name == "NSE Share":
+    name2 = st.text_input("NSE Share: ")
+
+start, end = st.columns(2, vertical_alignment="top")
 
 sdate = start.selectbox("Start Date", options=["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12",
                                                "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24",
@@ -39,37 +42,44 @@ start_date = f"{sdate}-{smonth}-{syear}"
 end_date = f"{edate}-{emonth}-{eyear}"
 
 
-@st.cache_data
 def fetch_prices():
     st.session_state.services_count += 1
 
     if st.session_state.services_count >= 20:
         st.error("You have used our services more than 20 times, which is the guest account limit.")
         st.stop()
-
-    try:
-        # Fetch data from the library
-        if name == "India Vix":
-            vix_data = capital_market.india_vix_data(start_date, end_date)
-            return vix_data
-
-        elif name != "NSE Share":
-            indexData = capital_market.index_data(name, start_date, end_date)
-            return indexData
-
-        else:
-            nseData = capital_market.price_volume_and_deliverable_position_data(start_date, end_date)
-            return nseData
-
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return None
+        
+    else:    
+        try:
+            # Fetch data from the library
+            if name == "India Vix":
+                vix_data = capital_market.india_vix_data(start_date, end_date)
+                return vix_data
+    
+            elif name != "NSE Share":
+                indexData = capital_market.index_data(name, start_date, end_date)
+                return indexData
+    
+            else:
+                nseData = capital_market.price_volume_and_deliverable_position_data(name2, start_date, end_date)
+                return nseData
+    
+        except Exception as e:
+            st.error(f"Error fetching data: {e}")
+            return None
 
 
 # Function to convert DataFrame to CSV
-@st.cache_data
-def convert_df(dataframe: pd.DataFrame):
+def convert_df_to_csv(dataframe: pd.DataFrame):
     return dataframe.to_csv().encode("utf-8")
+
+
+def convert_df_to_excel(dataframe: pd.DataFrame):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        dataframe.to_excel(writer, index=False, sheet_name='Sheet1')
+    processed_data = output.getvalue()
+    return processed_data
 
 
 plot_col1, plot_col2, plot_col3, plot_col4 = st.columns(4, vertical_alignment="top")
@@ -79,11 +89,14 @@ high = plot_col2.checkbox("High")
 low = plot_col3.checkbox("Low")
 close = plot_col4.checkbox("Close")
 plot_options = []
+
 # Button to fetch graph data
 if st.button("Get Graph"):
     data = fetch_prices()
+
     if data is not None:
         if name != "NSE Share":
+
             if openPrice:
                 plot_options.append("OPEN_INDEX_VAL")
 
@@ -95,23 +108,35 @@ if st.button("Get Graph"):
 
             if close:
                 plot_options.append("CLOSE_INDEX_VAL")
-            df = data[plot_options]
-            st.line_chart(df)
+
+            # Ensure that the selected columns exist in the data
+            df = data[[col for col in plot_options if col in data.columns]]
+
+            if not df.empty:
+                st.line_chart(df)
+            else:
+                st.warning("None of the selected columns are available in the data.")
 
         else:
+
             if openPrice:
-                plot_options.append("OPEN_INDEX_VAL")
+                plot_options.append("OpenPrice")
 
             if high:
-                plot_options.append("HIGH_INDEX_VAL")
+                plot_options.append("HighPrice")
 
             if low:
-                plot_options.append("LOW_INDEX_VAL")
+                plot_options.append("LowPrice")
 
             if close:
-                plot_options.append("CLOSE_INDEX_VAL")
-            df = data[plot_options]
-            st.line_chart(df)
+                plot_options.append("ClosePrice")
+
+            df = data[[col for col in plot_options if col in data.columns]]
+
+            if not df.empty:
+                st.line_chart(df)
+            else:
+                st.warning("None of the selected columns are available in the data.")
 
 # Button to download data
 if start_date != end_date:
@@ -119,11 +144,20 @@ if start_date != end_date:
         data = fetch_prices()
 
         if data is not None:
-            csv_data = convert_df(data)
-            st.success("Everything is done")
+            # Download as CSV
+            csv_data = convert_df_to_csv(data)
             st.download_button(
-                label="Click here to download",
+                label="Download as CSV",
                 data=csv_data,
-                file_name=f"{name}.csv",
+                file_name=f"{name2}.csv",
                 mime="text/csv"
+            )
+
+            # Download as Excel
+            excel_data = convert_df_to_excel(data)
+            st.download_button(
+                label="Download as Excel",
+                data=excel_data,
+                file_name=f"{name2}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
